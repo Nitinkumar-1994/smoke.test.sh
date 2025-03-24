@@ -1,1 +1,1 @@
-# smoke.test.sh
+# Cloudera Manager & CDH Prerequisites Check
