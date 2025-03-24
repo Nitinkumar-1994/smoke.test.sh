@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+
+# =====================================================
+# rhel8-prereq-check.sh: Cloudera Manager & CDH Prerequisites Check v2.0.0
+# =====================================================
+#
+# Display relevant system information and run installation prerequisite checks
+# for Cloudera Manager & CDH on Red Hat Enterprise Linux 8 and above.
+#
+# DISCLAIMER
+#
+# This script is provided "AS IS" without any warranties, including but not limited to:
+# installation, use, or performance. Use at your own risk. Review thoroughly before
+# executing in any environment.
+#
+# =====================================================
+
+set -euo pipefail
+
+# Color Definitions
+RED="\e[91m"
+GREEN="\e[92m"
+YELLOW="\e[93m"
+BLUE="\e[94m"
+MAGENTA="\e[95m"
+RESET="\e[0m"
+
+VER=2.0.0
+
+function print_status {
+    local message="$1"
+    local level="$2"
+    case "$level" in
+        INFO) echo -e "${BLUE}[INFO] ${RESET}$message" ;;
+        WARN) echo -e "${YELLOW}[WARN] ${RESET}$message" ;;
+        FAIL) echo -e "${RED}[FAIL] ${RESET}$message" ;;
+        PASS) echo -e "${GREEN}[PASS] ${RESET}$message" ;;
+    esac
+}
+
+if [ "$(uname)" != 'Linux' ]; then
+    print_status "This tool only supports Linux platforms." "FAIL"
+    exit 1
+fi
+
+if [[ ! -f /etc/redhat-release ]]; then
+    print_status "This script is intended for RHEL 8 and above only." "FAIL"
+    exit 1
+fi
+
+OS_VERSION=$(rpm -E %{rhel})
+if [[ "$OS_VERSION" -lt 8 ]]; then
+    print_status "This script requires Red Hat Enterprise Linux 8 or above." "FAIL"
+    exit 1
+fi
+
+function cleanup {
+    rm -f /tmp/prereq-checks-*.pl
+}
+trap cleanup EXIT
+
+function check_os {
+    print_status "OS: $(cat /etc/redhat-release)" "INFO"
+    print_status "Kernel: $(uname -r)" "INFO"
+}
+
+function check_resources {
+    print_status "Checking available memory and CPU..." "INFO"
+    print_status "Memory: $(free -h | grep Mem | awk '{print $2}')" "INFO"
+    print_status "CPU: $(lscpu | grep 'Model name:' | awk -F: '{ print $2 }' | sed 's/^ *//')" "INFO"
+}
+
+function check_thp {
+    print_status "Checking Transparent HugePages status..." "INFO"
+    cat /sys/kernel/mm/transparent_hugepage/enabled || print_status "Cannot check Transparent HugePages" "FAIL"
+    cat /sys/kernel/mm/transparent_hugepage/defrag || print_status "Cannot check Transparent HugePages defrag" "FAIL"
+}
+
+function check_ntp {
+    print_status "Checking NTP service..." "INFO"
+    if systemctl is-active chronyd &>/dev/null; then
+        print_status "chronyd is active." "PASS"
+    else
+        print_status "chronyd is not active." "FAIL"
+    fi
+}
+
+function check_hostname {
+    print_status "Hostname: $(hostname -f)" "INFO"
+}
+
+function check_entropy {
+    print_status "Checking system entropy..." "INFO"
+    ENTROPY=$(cat /proc/sys/kernel/random/entropy_avail)
+    print_status "Available entropy: $ENTROPY" "INFO"
+}
+
+function check_packages {
+    print_status "Checking required packages..." "INFO"
+    REQUIRED_PACKAGES=("java-1.8.0-openjdk" "bind-utils" "perl" "policycoreutils-python-utils" "ntp" "unzip" "curl" "wget" "fio" "iperf3" "sos" "tuned" "stress-ng")
+
+    for pkg in "${REQUIRED_PACKAGES[@]}"; do
+        if ! rpm -q $pkg &>/dev/null; then
+            print_status "Missing package: $pkg" "FAIL"
+        else
+            print_status "Found: $pkg" "PASS"
+        fi
+    done
+}
+
+function main {
+    print_status "Starting Cloudera Manager & CDH Prerequisites Check..." "INFO"
+    check_os
+    check_resources
+    check_thp
+    check_ntp
+    check_hostname
+    check_packages
+    check_entropy
+
+    print_status "Prerequisites Check Completed." "INFO"
+
+    print_status "Running additional tests..." "INFO"
+    check_firewalld
+    check_network
+    check_java_version
+    check_kernel_parameters
+    check_file_descriptor_limit
+    check_disk_io
+    check_tuned_profile
+    check_sosreport
+
+    print_status "All checks completed. Review any failures or warnings above." "INFO"
+}
+
+main
