@@ -1,0 +1,526 @@
+Redhat_CDP_Deployment_Own_Tarball
+
+Create VPC 
+
+launch Redhat 7 ec2 instance image: RHEL 7 x86_64 LATEST - 20240318-3bc3b5ac-2cf9-4a76-a1d3-dbc2bce20f69
+
+ami: ami-00caad7c56514c39b
+size: m4x.large , m5 .large 
+storage: 80
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+sudo yum install wget -y
+
+sudo yum install nano -y
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Download userfullscript.gz file and untar & do PreRequsite 
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+smoke_Test ****Run to see if the PreRequisites are done: 
+
+sudo wget https://s3.amazonaws.com/cloud-age/MIT_kerberos/prerequisite/check-pre-req.sh              
+
+[centos@mtml~]$ sh check-pre-req.sh 
+
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+1) Disable SeLinux:(ok)
+
+#[centos@mtml ~]$ cat /etc/selinux/config
+
+[centos@mtml ~]$ sudo sed -i  's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config
+
+#[centos@mtml ~]$ cat /etc/selinux/config
+
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+2) Disable Swappiness:(ok)
+
+[centos@mtml ~]$ sudo sysctl -p   #apply changes to system without reboot
+
+[centos@mtml ~]$ sudo su -c 'echo "vm.swappiness=1" >> /etc/sysctl.conf'
+
+[centos@mtml ~]$ sudo sysctl -p    #apply changes to system without reboot
+
+[centos@mtml ~]$ cat /proc/sys/vm/swappiness
+
+1                                                
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+overcommit_memory: Should be 1
+
+sudo su -c 'echo "vm.overcommit_memory =1" >> /etc/sysctl.conf'
+
+sudo sysctl -p
+
+cat /proc/sys/vm/overcommit_memory
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+3) Disable Ipv6:(ok)
+
+
+[centos@mtml ~]$ nano disable_ipv6.sh
+
+#!/bin/bash
+echo "Disabling IPv6..."
+sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
+sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
+echo "IPv6 disabled successfully."
+
+[centos@mtml ~]$ sudo sysctl -p
+
+------------or----------
+
+echo '#!/bin/bash
+sudo sysctl -w net.ipv6.conf.$1.disable_ipv6=1' > disable_ipv6.sh
+
+-----------or-----------
+[centos@mtml ~]$ sudo su -c 'cat >>/etc/sysctl.conf <<EOL
+net.ipv6.conf.all.disable_ipv6 =1
+net.ipv6.conf.default.disable_ipv6 =1
+net.ipv6.conf.lo.disable_ipv6 =1
+EOL'
+
+
+#[centos@mtml ~]$ sudo sh disable_ipv6.sh
+
+[centos@mtml ~]$ sudo sysctl -p
+
+
+[centos@mtml ~]$  cat /proc/sys/net/ipv6/conf/all/disable_ipv6
+
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+4) Disable Transparent Hugepage:(ok )
+
+
+In centos 7
+
+------------------or----------------
+[centos@mtml ~]$ sudo sed -i '/exit 0/d' /etc/rc.d/rc.local 
+[centos@mtml ~]$ sudo su -c 'cat >>/etc/rc.d/rc.local<<EOL
+if test -f /sys/kernel/mm/transparent_hugepage/enabled; then 
+echo never > /sys/kernel/mm/transparent_hugepage/enabled
+fi 
+if test -f /sys/kernel/mm/transparent_hugepage/defrag;then 
+echo never > /sys/kernel/mm/transparent_hugepage/defrag
+ fi 
+exit 0 
+EOL'
+
+[centos@mtml ~]$ sudo chmod 755 /etc/rc.d/rc.local      #making rc.local 
+#executable
+#to run rc.local   sudo systemctl restart rc-local
+[centos@mtml ~]$ sudo sysctl -p
+
+sudo cat /etc/default/grub
+sudo nano /etc/default/grub
+transparent_hugepage=never
+
+------------------------check above commands --------------
+
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+5) Disable Firewall:(ok)
+
+ #Run to disable the IPTABLES :
+
+sudo yum install iptables-services -y
+sudo systemctl disable iptables
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+6) DECREASE RESERVE SPACE:(ok)
+
+[centos@mtml ~]$ sudo file -sL /dev/xvda1 #display fs type
+
+[centos@mtml ~]$ lsblk #list all available blocks on system
+
+[centos@mtml ~]$ sudo tune2fs -m 1 /dev/xvda1
+# to set the percentage of reserved blocks on the file system to 1% . This can be useful #if you want to free up more space on your file system by reducing the amount of space #reserved for the root user .
+Problem is not solved because of error 
+tune2fs 1.42.9 (28-Dec-2013)
+tune2fs: Bad magic number in super-block while trying to open /dev/xvda1
+Couldn't find valid filesystem superblock.
+File system is xfs and tune2fs works on ext-2/3/4
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+7) Configure NTP: (ok)
+
+[centos@mtml ~]$ sudo yum -y install ntp
+
+sudo yum install chrony -y   ##### --- for redhat 8 above 
+
+sudo systemctl enable chronyd.service
+
+[centos@mtml~]$ sudo chkconfig chronyd on
+
+[centos@mtml~]$ sudo service chronyd start
+
+[centos@mtml ~]$ service chronydstatus
+
+ntpd (pid  1765) is running...
+----ok -----
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+8) Run to remove TUNED: (ok)
+
+
+[centos@mtml ~]$ sudo yum remove tuned -y
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+9)sssd installation and configuration:
+
+sudo yum install sssd -y
+sudo nano sssd.conf
+
+
+sudo mv sssd.conf /etc/sssd/
+sudo chown root:root /etc/sssd/sssd.conf
+sudo chmod 600 /etc/sssd/sssd.conf
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+10)Run to install NSCD: (ok)
+
+[centos@mtml~]$  nano install_nscd.sh
+
+#!/bin/bash
+
+# Check if the script is being run as root
+if [ "$EUID" -ne 0 ]
+  then echo "Please run as root"
+  exit
+fi
+
+# Install NSCD
+sudo yum install -y nscd
+
+# Start the NSCD service
+sudo systemctl start nscd.service
+
+# Enable the NSCD service to start on boot
+sudo systemctl enable nscd.service
+
+# Check the status of the NSCD service
+sudo systemctl status nscd.service
+
+[centos@mtml ~]$ sudo sh install_nscd.sh
+
+[centos@mtml ~]$ sudo yum install bind-utils -y
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#Run to install LZO: (ok)
+
+
+echo '#!/bin/bash
+sudo yum install lzo' > install_lzo.sh
+sudo sh install_lzo.sh
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+sudo su -c "touch /home/centos/.ssh/config; echo -e 'Host *\n  StrictHostKeyChecking no\n  UserKnownHostsFile=/dev/null' >> /home/centos/.ssh/config"
+
+echo -e  'y\n'| ssh-keygen -t rsa -P "" -f $HOME/.ssh/id_rsa 
+
+cat $HOME/.ssh/id_rsa.pub >> $HOME/.ssh/authorized_keys
+
+sudo systemctl restart sshd.service
+
+ssh localhost
+
+exit
+
+sudo yum install java-1.8.0-openjdk -y
+
+sudo reboot (#Do a Reboot after doing pre requisites)
+
+Make the image AMI 
+
+NOTE - Either SCM server volume is <10GB then modify upto >80GB
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+smoke_Test ****Run to see if the PreRequisites are done: 
+
+sudo wget https://s3.amazonaws.com/cloud-age/MIT_kerberos/prerequisite/check-pre-req.sh              
+
+[centos@mtml~]$ sh check-pre-req.sh 
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+************Install mysql for Cloudera Manager***************** 
+
+wget https://dev.mysql.com/get/mysql57-community-release-el7-9.noarch.rpm
+
+md5sum mysql57-community-release-el7-9.noarch.rpm
+
+sudo rpm -ivh mysql57-community-release-el7-9.noarch.rpm
+
+sudo yum install --nogpgcheck mysql-server -y
+
+sudo systemctl start mysqld
+
+sudo systemctl status mysqld 
+
+sudo grep 'temporary password' /var/log/mysqld.log
+
+sudo mysql_secure_installation
+
+n, y, y, n, y, y
+
+mysqladmin -u root -p version
+
+mysql -u root -p
+
+exit;
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Launch a instance you taken AMI EC2 using that which we have created with same key and SG
+
+send pem key to the main host using pscp or scp
+
+[On Powershell]
+.\pscp.exe -i .\testy.ppk testy.pem clustercmd.sh centos@ip:/home/.ssh
+
+[On linux]
+scp -i cloudera.pem cloudera.pem centos@13.126.28.164:/home/centos
+
+chmod 400 cloudera.pem
+
+sudo vi cluster
+
+put all ip in clutser file
+
+:wq
+
+sudo vi clustercmd.sh
+
+for i in `cat cluster`; do
+ssh -t -i ./cloudera.pem centos@$i $*      #change the keyname
+done
+
+:wq
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+*************Install JDBC On All Host******************
+
+sh clustercmd.sh uptime --pretty
+
+sh clustercmd.sh wget https://dev.mysql.com/get/Downloads/Connector-J/mysql-connector-java-5.1.46.tar.gz
+
+sh clustercmd.sh tar -zxvf mysql-connector-java-5.1.46.tar.gz
+
+sh clustercmd.sh sudo mkdir -p /usr/share/java/
+
+sh clustercmd.sh cd mysql-connector-java-5.1.46
+
+sh clustercmd.sh sudo cp /home/ec2-user/mysql-connector-java-5.1.46/mysql-connector-java-5.1.46-bin.jar /usr/share/java/mysql-connector-java.jar
+
+NOTE - check Redhat machine then replace /home/centos to /home/ec2-user
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Create SCM Database
+
+mysql -u root -p
+
+CREATE DATABASE scm DEFAULT CHARACTER SET utf8 DEFAULT COLLATE utf8_general_ci;
+GRANT ALL ON scm.* TO 'scm'@'%' IDENTIFIED BY 'P@ssw0rd';
+SHOW DATABASES;
+
+exit;
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Launch windows machine 
+
+take c4xlarge and 80gb with same sg
+
+update the sg 'rdp to anywhere' and 'all traffic to same sg', 'cutsom tcp to 7180 anywhere'
+
+Setup The CM7 Or CDH7 Local Repository (On Webserver)
+
+steps - Open your work-space or Your windows & Linux local machine browser (chrome)
+
+Download the repo from the link  
+
+cm7 
+https://drive.google.com/file/d/1g39MsKlo9rqp9siM6g66oi2adrdmUEvi/view
+
+cdh7
+https://drive.google.com/file/d/1SPp6CWFhsQ-0N233AAXHlCROGUppegto/view
+
+you will see two folders i.e cm7 & cdh7.
+
+Please send only the cm7 and cdh7 on your instance.
+
+[Linux] scp -i key.pem cm7 cdh7 centos@ip:/home/centos 
+
+[Windows] pscp.exe -i key.ppk cm7 cdh7 centos@ip:/home/centos
+
+------------------------------------------------------------------------------------------------------------------------------
+
+Setup for Webserver installing apache webserver & launch any Redhat or Centos or Ubuntu machine 
+
+sudo yum install httpd -y
+
+sudo systemctl enable httpd
+
+sudo chkconfig httpd on
+
+sudo service httpd status
+
+sudo systemctl is-enabled httpd
+
+sudo service httpd start
+
+sudo service httpd status
+
+tar -xvf cm7
+
+tar -xvf cdh7
+
+sudo mv cm7/ cdh7/ /var/www/html/repo/
+
+check on website http://ipaddress             (Either it not accessing website then check SeLinux to make permissive)
+
+cd /var/www/html/
+ 
+sudo mkdir repo
+
+sudo mv cdh7.tar.gz cm7.tar.gz /var/www/html/repo/
+
+sestatus                                ( Current mode:enforcing) SeLinux to make permissive
+
+sudo setenforce 0                     To check this (Current mode: permissive)
+
+sestatus
+
+******Optional if fails above cmd then fire below command
+
+sudo chcon -R -t httpd_sys_content_t /var/www/html
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+sudo vi /etc/yum.repos.d/cloudera-repo.repo             ( This file open in cloudera manager server or scm ec2 linux machine )
+
+[cloudera-repo]
+name=cloudera-repo
+baseurl=http://ip-10-0-134-93.ap-south-1.compute.internal/repo/cm7/       
+enabled=1
+gpgcheck=0
+
+:wq
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+sudo yum clean all
+
+sudo yum makecache 
+
+sudo yum install java-1.8.0-openjdk -y
+
+sudo yum install cloudera-manager-server cloudera-manager-daemons -y
+
+echo "ssl = 0" | sudo tee -a /etc/my.cnf
+
+sudo systemctl restart mysqld
+
+sudo /opt/cloudera/cm/schema/scm_prepare_database.sh mysql -h 10.0.137.51 scm scm P@ssw0rd          (Provide scm private ip)
+
+sh clustercmd.sh sudo cp /home/ec2-user/mysql-connector-java-5.1.46/mysql-connector-java-5.1.46-bin.jar /usr/share/java/mysql-connector-java.jar
+
+**NOTE - Either upper command fails then run below command 
+
+sudo yum install mysql-connector-java
+
+wget https://repo1.maven.org/maven2/mysql/mysql-connector-java/8.0.33/mysql-connector-java-8.0.33.jar
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+*****This file open in cloudera manager server or scm ec2 linux machine****
+
+sudo systemctl status cloudera-scm-server
+
+sudo service cloudera-scm-server start 
+
+sudo service cloudera-scm-server status
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+http://ipaddress:7180              (Access through workspace & enter private ip of scm)
+
+NOTE- Go in sudo vi /etc/hosts      (Add FQDN and ClouderaManager )
+
+username - admin
+password -  admin
+
+Try Cloudera Data Platform for 60 days
+
+continue >> continue >> name of clutser >> provide the hostname >> 
+
+Custom repo for cloudera manager agent
+
+http://13.126.28.164/cm7/
+
+http://13.126.28.164/cdh7/p/cdh7/7.1.3.0/parcels/
+
+continue 
+
+choose custome services (only take hive hdfs yarn zookeer)
+
+hdfs, hive, hive on tez, hue, oozie, yarn, yarn queue manager, zookeeper
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Setup Database🔗
+
+Login On Database server host and create the databases:
+
+mysql -u root -p
+Enter the password
+
+create database hive DEFAULT CHARACTER SET utf8;
+grant all on hive.* TO 'hive'@'%' IDENTIFIED BY 'P@ssw0rd';
+
+create database hue DEFAULT CHARACTER SET utf8;
+grant all on hue.* TO 'hue'@'%' IDENTIFIED BY 'P@ssw0rd';
+
+create database rman DEFAULT CHARACTER SET utf8;
+grant all on rman.* TO 'rman'@'%' IDENTIFIED BY 'P@ssw0rd';
+
+create database oozie DEFAULT CHARACTER SET utf8;
+grant all on oozie.* TO 'oozie'@'%' IDENTIFIED BY 'P@ssw0rd';
+
+create database navs DEFAULT CHARACTER SET utf8;
+grant all on navs.* TO 'navs'@'%' IDENTIFIED BY 'P@ssw0rd';
+
+create database navms DEFAULT CHARACTER SET utf8;
+grant all on navms.* TO 'navms'@'%' IDENTIFIED BY 'P@ssw0rd';
+
+create database actmo DEFAULT CHARACTER SET utf8;
+grant all on actmo.* TO 'actmo'@'%' IDENTIFIED BY 'P@ssw0rd';
+
+create database sentry DEFAULT CHARACTER SET utf8;
+grant all on sentry.* TO 'sentry'@'%' IDENTIFIED BY 'P@ssw0rd';
+
+CREATE USER 'temp'@'%' IDENTIFIED BY 'P@ssw0rd';
+
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, PROCESS, REFERENCES, INDEX, ALTER, SHOW DATABASES, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER ON *.* TO 'temp'@'%' WITH GRANT OPTION;
+
+exit;
+
+
